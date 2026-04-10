@@ -167,11 +167,14 @@ orik/
 └── templates/
     └── index.html     # Interfaz web
 ```
-
----
-
 ## ⚖️ Licencia
+---
 
 © 2025 Orik — Todos los derechos reservados.
 
-Queda estrictamente prohibida la distribución, venta, copia o uso comercial de este software sin autorización expresa y por escrito del autor.
+Se permite la descarga, instalación y uso de este software, incluido su uso con fines comerciales.
+
+No está permitida la modificación, redistribución, sublicencia, venta ni creación de obras derivadas sin autorización expresa y por escrito del autor.
+
+Se recomienda descargar el software únicamente desde la fuente oficial para garantizar su integridad y seguridad. El autor no se hace responsable de versiones modificadas o distribuidas por terceros.
+
