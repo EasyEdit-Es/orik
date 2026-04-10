@@ -9,7 +9,6 @@
 - 🔒 **100% local** — sin APIs externas, sin suscripciones, sin coste por uso
 - 🌐 **Búsqueda web en tiempo real** — integración con DuckDuckGo y Wikipedia
 - 🧠 **Dos modelos de IA** — uno rápido para búsquedas y otro más potente para conversación profunda
-- 💾 **Memoria persistente** — recuerda información sobre el usuario entre sesiones
 - 🔄 **Detección de cambio de tema** automática para respuestas más precisas
 - 🎨 **Interfaz web limpia** — accesible desde cualquier navegador en tu red local
 
