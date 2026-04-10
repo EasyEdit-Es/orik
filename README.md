@@ -46,7 +46,7 @@ ollama --version
 
 ### 2. Descarga los modelos de IA
 
-Abre una terminal y ejecuta estos dos comandos. El primero descarga el modelo rápido (~7 GB) y el segundo el modelo inteligente (~13 GB):
+Abre una terminal en powershell (como admin es opcional) y ejecuta estos dos comandos. El primero descarga el modelo rápido (~7 GB) y el segundo el modelo inteligente (~13 GB):
 
 ```bash
 ollama pull gemma4:e2b
@@ -75,6 +75,14 @@ Asegúrate de tener Python 3.10+ instalado. Luego ejecuta:
 ```bash
 pip install -r requirements.txt
 ```
+Si no te funciona prueba con:
+```bash
+python3 -m pip install -r requirements.txt
+```
+O:
+```bash
+py -r pip install -r requirements.txt
+```
 
 ---
 
@@ -101,6 +109,10 @@ Ve a tu navegador y entra en:
 
 ```
 http://localhost:5000
+```
+O tu y ip del ordenador:
+```bash
+http://tuip:5000
 ```
 
 ¡Listo! Ya puedes hablar con Orik.
@@ -153,7 +165,6 @@ orik/
 ├── app2test.py        # Servidor principal Flask
 ├── wsgi.py            # Punto de entrada para despliegue en producción
 ├── requirements.txt   # Dependencias Python
-├── memoria.json       # Memoria del usuario (se crea automáticamente)
 └── templates/
     └── index.html     # Interfaz web
 ```
