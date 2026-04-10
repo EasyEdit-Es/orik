@@ -87,9 +87,7 @@ py -m pip install -r requirements.txt
 
 ### 5. Inicia el servidor
 
-```bash
-python app2test.py
-```
+Ejecuta el .exe
 
 Deberías ver algo así en la terminal:
 
