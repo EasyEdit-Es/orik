@@ -81,7 +81,7 @@ python3 -m pip install -r requirements.txt
 ```
 O:
 ```bash
-py -r pip install -r requirements.txt
+py -m pip install -r requirements.txt
 ```
 
 ---
