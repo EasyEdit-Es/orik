@@ -1,0 +1,11 @@
+{
+  "theme": "light",
+  "port": 5000,
+  "app_file": "app3test.py",
+  "model": "gemma4:e2b",
+  "autoscroll": true,
+  "font_size": 9,
+  "start_minimized": false,
+  "notify_crash": true,
+  "max_log_lines": 2000
+}
