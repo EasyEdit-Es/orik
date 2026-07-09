@@ -83,6 +83,28 @@ class TestDecidirBusqueda:
         buscar, _ = nlp.decidir_busqueda(op)
         assert buscar is False
 
+    @pytest.mark.parametrize("pregunta", [
+        "¿Qué día es hoy?",
+        "que dia es hoy",
+        "Qué fecha es hoy",
+        "cuál es la fecha",
+        "en qué año estamos",
+        "dime la hora",
+        "qué hora es",
+    ])
+    def test_preguntas_de_fecha_no_buscan(self, pregunta):
+        buscar, _ = nlp.decidir_busqueda(pregunta)
+        assert buscar is False, f"'{pregunta}' no debería disparar búsqueda"
+
+    @pytest.mark.parametrize("pregunta", [
+        "a qué hora abre el supermercado",
+        "a qué hora es el partido del Madrid",
+        "qué hora es el vuelo a Roma",
+    ])
+    def test_preguntas_de_hora_con_evento_si_buscan(self, pregunta):
+        buscar, _ = nlp.decidir_busqueda(pregunta)
+        assert buscar is True, f"'{pregunta}' sí debería buscar (pregunta sobre evento)"
+
     def test_pregunta_real_busca(self):
         buscar, query = nlp.decidir_busqueda("¿cuál es el resultado del real madrid ayer?")
         assert buscar is True

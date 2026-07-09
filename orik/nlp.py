@@ -105,6 +105,14 @@ _SIN_BUSQUEDA_TEMAS_RE = [
         r"\bcalcula\b",
         r"\bresuelve\b",
         r"\bderiva\b",
+        # Preguntas de fecha/hora: el modelo ya tiene la fecha en el system prompt.
+        # Se excluyen si mencionan un evento concreto (partido, vuelo, apertura...) → sí buscar.
+        r"^\s*¿?\s*(qué|que)\s+(día|dia|fecha|mes)\s+(es|son|estamos)\b(?!.*\b(partido|vuelo|concierto|evento|abre|abren|cierra|cierran|estrena|estreno)\b)",
+        r"^\s*¿?\s*(qué|que)\s+(día|dia)\s+es\s+(hoy|mañana|manana|ayer)\s*[¿?!.]*\s*$",
+        r"^\s*¿?\s*(a\s+)?(qué|que)\s+hora\s+(es|son)\b(?!.*\b(partido|vuelo|concierto|evento|abre|abren|cierra|cierran|estrena|estreno)\b)",
+        r"^\s*¿?\s*(cuál|cual)\s+es\s+(la\s+|el\s+)?(fecha|hora|día|dia)\b(?!.*\b(partido|vuelo|concierto|evento|abre|abren|cierra|cierran|estrena|estreno)\b)",
+        r"^\s*¿?\s*(en\s+)?(qué|que)\s+año\s+estamos\b",
+        r"^\s*¿?\s*dime\s+(la\s+|el\s+)?(hora|fecha|día|dia)\s*[¿?!.]*\s*$",
         r"\bintegra\b",
         r"^\d[\d\s\+\-\*\/\(\)\.]+$",
     ]
