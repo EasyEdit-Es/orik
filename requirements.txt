@@ -4,4 +4,6 @@ python-dotenv>=1.0,<2.0
 # ddgs (nombre nuevo). Requiere Python >=3.10.
 # Si estás en Python 3.9, cambia esta línea por: duckduckgo-search>=6.0
 ddgs>=6.0
+# Para extracción de contenido de páginas web
+beautifulsoup4>=4.12,<5.0
 gunicorn>=21.2,<24.0

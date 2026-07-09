@@ -9,7 +9,7 @@ from functools import wraps
 
 from flask import Blueprint, Response, jsonify, render_template, request, session, stream_with_context
 
-from . import config, memoria, nlp, search, session_store, topic_detect
+from . import config, memoria, nlp, query_rewrite, search, session_store, topic_detect
 from .logging_setup import get_logger
 from .ollama_client import OllamaError, chat_completion, chat_stream
 
@@ -52,10 +52,12 @@ def _build_system_prompt(memoria_txt: str) -> str:
         f"Hoy es {fecha}.\n\n"
         "REGLA CRÍTICA SOBRE DATOS DE INTERNET:\n"
         "Cuando en el mensaje del usuario aparezca un bloque \"DATOS REALES OBTENIDOS DE INTERNET\",\n"
-        "esos datos son información actual y verificada que acabas de buscar. DEBES usarlos para responder.\n"
-        "NO digas que no tienes acceso a información en tiempo real. NO digas que no puedes acceder a horarios.\n"
-        "Si los datos están ahí, úsalos directamente y responde con confianza.\n"
-        "Si los datos no contienen exactamente lo que se pregunta, dilo pero extrae lo más relevante."
+        "esos datos son información actual y verificada que acabas de buscar en la web. "
+        "Cada resultado va numerado y lleva su fuente y URL. DEBES basar tu respuesta en esos datos "
+        "y, si citas algo concreto, referencia la fuente entre paréntesis como (fuente: dominio) o "
+        "con el número entre corchetes [1], [2]. NO digas que no tienes acceso a información en "
+        "tiempo real. Si los datos no contienen exactamente lo que se pregunta, dilo brevemente "
+        "y extrae lo más relevante. No inventes cifras ni fechas que no aparezcan en los datos."
         f"{memoria_bloque}"
     )
 
@@ -86,6 +88,18 @@ def _prepare_messages(
     debe_buscar, query = nlp.decidir_busqueda(
         mensaje_usuario, historial_previo, hay_cambio=cambio_de_tema
     )
+
+    # Si la regex-only produjo algo pobre, delegar en el LLM rápido para
+    # reescribir la query. Solo cuando merece la pena: pregunta larga o
+    # query resultante corta/floja.
+    if debe_buscar and (len(mensaje_usuario.split()) >= 5 or len(query.split()) < 3):
+        mejorada = query_rewrite.rewrite_query_with_llm(
+            mensaje_usuario,
+            historial_previo if not cambio_de_tema else None,
+        )
+        if mejorada:
+            query = mejorada
+
     log.info("Buscar en web=%s | query=%r", debe_buscar, query)
 
     contexto_web = ""

@@ -1,21 +1,51 @@
-"""Búsqueda web con varias fuentes en paralelo.
+"""Búsqueda web multi-fuente con extracción de contenido.
 
-Cachea resultados con TTL para no repetir las mismas queries en poco tiempo.
+Diseño:
+1. Consulta varias fuentes en paralelo (DDG web, DDG news, Wikipedia, Yahoo).
+2. Deduplica resultados por dominio (evita 5 resultados del mismo sitio).
+3. Descarga las 2-3 mejores páginas y extrae texto principal.
+4. Combina snippets + contenido real y lo pasa al LLM en formato compacto.
+5. Cachea el resultado final con TTL.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import requests
 
 from . import config
 from .logging_setup import get_logger
+from .web_fetch import extract_main_text, fetch_url, is_blocked_domain
 
 log = get_logger(__name__)
+
+
+# ── Modelo de resultado ──────────────────────────────────────
+
+@dataclass
+class SearchHit:
+    """Un resultado unificado de cualquier fuente."""
+    title: str
+    url: str
+    snippet: str
+    source: str
+    published: str = ""  # fecha ISO si es noticia
+    content: str = ""  # texto extraído tras fetch
+    domain: str = field(init=False)
+
+    def __post_init__(self):
+        try:
+            host = urlparse(self.url).netloc.lower()
+            self.domain = host.removeprefix("www.")
+        except ValueError:
+            self.domain = ""
 
 
 # ── Cache TTL sencilla (thread-safe) ──────────────────────────
@@ -40,7 +70,6 @@ def _cache_get(key: str) -> str | None:
 def _cache_put(key: str, value: str) -> None:
     with _cache_lock:
         if len(_cache) >= config.SEARCH_CACHE_SIZE:
-            # Expulsar la entrada más antigua
             oldest_key = min(_cache, key=lambda k: _cache[k][0])
             _cache.pop(oldest_key, None)
         _cache[key] = (time.time(), value)
@@ -51,76 +80,139 @@ def clear_cache() -> None:
         _cache.clear()
 
 
-# ── Fuentes de búsqueda ───────────────────────────────────────
+# ── Detección de intención "noticias" ─────────────────────────
 
-def _buscar_ddgs(query: str, max_results: int) -> tuple[str, str] | None:
+_NEWS_KEYWORDS = (
+    "noticia", "noticias", "última hora", "ultima hora", "hoy",
+    "esta semana", "este mes", "ayer", "reciente", "recientes",
+    "anuncia", "anunció", "anuncio", "presenta", "presentó",
+    "resultado", "gana", "ganó", "pierde", "perdió", "marcó",
+    "elecciones", "gobierno", "crisis",
+)
+
+
+def es_pregunta_de_noticias(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _NEWS_KEYWORDS)
+
+
+# ── Fuentes ──────────────────────────────────────────────────
+
+def _importar_ddgs():
     try:
         from ddgs import DDGS  # type: ignore
+        return DDGS
     except ImportError:
-        try:
-            from duckduckgo_search import DDGS  # type: ignore
-        except ImportError:
-            log.warning("ddgs/duckduckgo-search no instalado")
-            return None
+        pass
     try:
-        ddgs = DDGS(timeout=8)
-        resultados = list(
-            ddgs.text(query, region="es-es", safesearch="moderate", max_results=max_results)
-        )
+        from duckduckgo_search import DDGS  # type: ignore
+        return DDGS
+    except ImportError:
+        return None
+
+
+def _buscar_ddgs_web(query: str, max_results: int) -> list[SearchHit]:
+    DDGS = _importar_ddgs()
+    if DDGS is None:
+        log.warning("ddgs/duckduckgo-search no instalado")
+        return []
+    try:
+        with DDGS(timeout=8) as ddgs:
+            resultados = list(
+                ddgs.text(query, region="es-es", safesearch="moderate",
+                          max_results=max_results)
+            )
+    except Exception as exc:  # ddgs lanza sus propios errores
+        log.warning("Error DDGS web: %s", exc)
+        return []
+    hits: list[SearchHit] = []
+    for r in resultados:
+        url = r.get("href") or r.get("url", "")
+        if not url or is_blocked_domain(url):
+            continue
+        hits.append(SearchHit(
+            title=(r.get("title") or "Sin título").strip(),
+            url=url,
+            snippet=(r.get("body") or "").strip(),
+            source="DuckDuckGo",
+        ))
+    return hits
+
+
+def _buscar_ddgs_news(query: str, max_results: int) -> list[SearchHit]:
+    DDGS = _importar_ddgs()
+    if DDGS is None:
+        return []
+    try:
+        with DDGS(timeout=8) as ddgs:
+            if not hasattr(ddgs, "news"):
+                return []
+            resultados = list(
+                ddgs.news(query, region="es-es", safesearch="moderate",
+                          max_results=max_results, timelimit="w")
+            )
     except Exception as exc:
-        log.warning("Error DDGS: %s", exc)
-        return None
-    if not resultados:
-        return None
-    lineas = ["📡 DuckDuckGo:", ""]
-    for i, r in enumerate(resultados[:max_results], 1):
-        titulo = r.get("title", "Sin título")
-        url = r.get("href", "")
-        snippet = (r.get("body") or "")[:400]
-        lineas.append(f"{i}. {titulo}")
-        if url:
-            lineas.append(f"   Fuente: {url}")
-        lineas.append(f"   {snippet}")
-        lineas.append("")
-    return ("DuckDuckGo (DDGS)", "\n".join(lineas).strip())
+        log.info("DDGS news no disponible: %s", exc)
+        return []
+    hits: list[SearchHit] = []
+    for r in resultados:
+        url = r.get("url") or r.get("href", "")
+        if not url or is_blocked_domain(url):
+            continue
+        hits.append(SearchHit(
+            title=(r.get("title") or "Sin título").strip(),
+            url=url,
+            snippet=(r.get("body") or r.get("excerpt") or "").strip(),
+            source=(r.get("source") or "DuckDuckGo News").strip(),
+            published=(r.get("date") or "").strip(),
+        ))
+    return hits
 
 
-def _buscar_ddg_instant(query: str) -> tuple[str, str] | None:
+def _buscar_ddg_instant(query: str, _max_results: int) -> list[SearchHit]:
+    """DuckDuckGo Instant Answers: definiciones y resúmenes cortos."""
     try:
         resp = requests.get(
             "https://api.duckduckgo.com",
-            params={"q": query, "format": "json", "kl": "es-es", "no_html": 1, "skip_disambig": 1},
+            params={"q": query, "format": "json", "kl": "es-es",
+                    "no_html": 1, "skip_disambig": 1},
             timeout=6,
         )
     except requests.RequestException as exc:
-        log.warning("Error DDG Instant: %s", exc)
-        return None
+        log.info("DDG Instant falló: %s", exc)
+        return []
     if not resp.ok:
-        return None
+        return []
     try:
         data = resp.json()
     except ValueError:
-        return None
-
-    abstract = data.get("AbstractText", "")
-    related = data.get("RelatedTopics", [])
-    lineas: list[str] = []
+        return []
+    hits: list[SearchHit] = []
+    abstract = (data.get("AbstractText") or "").strip()
+    abstract_url = data.get("AbstractURL") or ""
     if abstract:
-        lineas.append(f"💡 Resumen: {abstract}")
-        lineas.append("")
-    count = 0
-    for t in related:
-        if isinstance(t, dict) and t.get("Text"):
-            lineas.append(f"- {t['Text']}")
-            count += 1
-            if count >= 4:
-                break
-    if not lineas:
-        return None
-    return ("DuckDuckGo Instant", "\n".join(lineas).strip())
+        hits.append(SearchHit(
+            title=data.get("Heading") or query,
+            url=abstract_url,
+            snippet=abstract,
+            source="DuckDuckGo Instant",
+        ))
+    for t in data.get("RelatedTopics", [])[:4]:
+        if not isinstance(t, dict):
+            continue
+        texto = (t.get("Text") or "").strip()
+        first_url = (t.get("FirstURL") or "").strip()
+        if texto and first_url:
+            hits.append(SearchHit(
+                title=texto.split(" - ")[0][:120],
+                url=first_url,
+                snippet=texto,
+                source="DuckDuckGo Instant",
+            ))
+    return hits
 
 
-def _buscar_wikipedia(query: str) -> tuple[str, str] | None:
+def _buscar_wikipedia(query: str, _max_results: int) -> list[SearchHit]:
     try:
         sresp = requests.get(
             "https://es.wikipedia.org/w/api.php",
@@ -129,40 +221,50 @@ def _buscar_wikipedia(query: str) -> tuple[str, str] | None:
             timeout=6,
         )
     except requests.RequestException as exc:
-        log.warning("Error Wikipedia: %s", exc)
-        return None
+        log.info("Wikipedia (search) falló: %s", exc)
+        return []
     if not sresp.ok:
-        return None
+        return []
     try:
-        hits = sresp.json().get("query", {}).get("search", [])
+        raw = sresp.json().get("query", {}).get("search", [])
     except ValueError:
-        return None
-    if not hits:
-        return None
+        return []
+    if not raw:
+        return []
 
-    def get_extract(hit: dict) -> str:
+    def get_extract(hit: dict) -> SearchHit | None:
         pid = hit.get("pageid")
-        title = hit.get("title", "")
+        title = hit.get("title", "").strip()
+        if not pid or not title:
+            return None
+        extract = ""
         try:
             eres = requests.get(
                 "https://es.wikipedia.org/w/api.php",
-                params={"action": "query", "prop": "extracts", "explaintext": 1,
-                        "pageids": pid, "format": "json", "exintro": 1},
+                params={"action": "query", "prop": "extracts",
+                        "explaintext": 1, "pageids": pid,
+                        "format": "json", "exintro": 1},
                 timeout=5,
             )
             if eres.ok:
                 pages = eres.json().get("query", {}).get("pages", {})
-                extract = (pages.get(str(pid), {}).get("extract") or "")[:300]
-                return f"- {title}: {extract}\n"
+                extract = (pages.get(str(pid), {}).get("extract") or "").strip()
         except requests.RequestException:
             pass
-        return f"- {title}\n"
+        # snippet ya viene con <span> — quita las etiquetas
+        snippet = re.sub(r"<[^>]+>", "", hit.get("snippet", "")).strip()
+        url = f"https://es.wikipedia.org/?curid={pid}"
+        return SearchHit(
+            title=title,
+            url=url,
+            snippet=(extract or snippet)[:800],
+            source="Wikipedia",
+            content=extract[:2500] if extract else "",
+        )
 
     with ThreadPoolExecutor(max_workers=2) as ex:
-        extractos = list(ex.map(get_extract, hits))
-
-    texto = "📚 Wikipedia:\n\n" + "\n".join(extractos)
-    return ("Wikipedia (es)", texto.strip())
+        hits = [h for h in ex.map(get_extract, raw) if h]
+    return hits
 
 
 _FINANCE_KEYWORDS = (
@@ -171,9 +273,9 @@ _FINANCE_KEYWORDS = (
 )
 
 
-def _buscar_yahoo_finance(query: str) -> tuple[str, str] | None:
+def _buscar_yahoo_finance(query: str, _max_results: int) -> list[SearchHit]:
     if not any(k in query.lower() for k in _FINANCE_KEYWORDS):
-        return None
+        return []
     try:
         yf = requests.get(
             "https://query1.finance.yahoo.com/v7/finance/quote",
@@ -181,41 +283,100 @@ def _buscar_yahoo_finance(query: str) -> tuple[str, str] | None:
             timeout=6,
         )
     except requests.RequestException as exc:
-        log.warning("Error Yahoo Finance: %s", exc)
-        return None
+        log.info("Yahoo Finance falló: %s", exc)
+        return []
     if not yf.ok:
-        return None
+        return []
     try:
         qdata = yf.json().get("quoteResponse", {}).get("result", [])
     except ValueError:
-        return None
+        return []
     if not qdata:
-        return None
-    lineas = ["🛢️ Precios (Yahoo Finance):", ""]
+        return []
+    lineas: list[str] = []
     for q in qdata:
         sym = q.get("symbol")
         name = q.get("shortName") or q.get("longName") or sym
         price = q.get("regularMarketPrice")
         change = q.get("regularMarketChange", 0) or 0
         change_pct = q.get("regularMarketChangePercent", 0) or 0
-        lineas.append(f"{name} ({sym}): {price} USD ({change:+.2f}, {change_pct:+.2f}%)")
-    return ("Yahoo Finance", "\n".join(lineas).strip())
+        lineas.append(
+            f"{name} ({sym}): {price} USD ({change:+.2f}, {change_pct:+.2f}%)"
+        )
+    return [SearchHit(
+        title="Cotizaciones actuales",
+        url="https://finance.yahoo.com/",
+        snippet="\n".join(lineas),
+        source="Yahoo Finance",
+    )]
 
 
-# ── Orquestación ──────────────────────────────────────────────
+# ── Orquestación ─────────────────────────────────────────────
 
-_FUENTES: dict[str, Callable[[str, int], tuple[str, str] | None]] = {
-    "ddgs": lambda q, n: _buscar_ddgs(q, n),
-    "instant": lambda q, _n: _buscar_ddg_instant(q),
-    "wiki": lambda q, _n: _buscar_wikipedia(q),
-    "finance": lambda q, _n: _buscar_yahoo_finance(q),
+_FuenteFn = Callable[[str, int], list[SearchHit]]
+
+_FUENTES: dict[str, _FuenteFn] = {
+    "ddgs": _buscar_ddgs_web,
+    "instant": _buscar_ddg_instant,
+    "wiki": _buscar_wikipedia,
+    "finance": _buscar_yahoo_finance,
 }
 
-_ORDEN_SALIDA = ("finance", "ddgs", "instant", "wiki")
+
+def _dedupe_por_dominio(hits: list[SearchHit], max_por_dominio: int = 1) -> list[SearchHit]:
+    """Deja como mucho `max_por_dominio` resultados por dominio, conservando orden."""
+    contados: dict[str, int] = {}
+    salida: list[SearchHit] = []
+    for h in hits:
+        key = h.domain or h.url
+        if contados.get(key, 0) >= max_por_dominio:
+            continue
+        contados[key] = contados.get(key, 0) + 1
+        salida.append(h)
+    return salida
+
+
+def _enriquecer_con_contenido(hits: list[SearchHit], k: int = 2) -> None:
+    """Descarga las `k` primeras páginas y les rellena `.content`. Modifica in-place."""
+    candidatos = [h for h in hits if not h.content and h.url and not h.url.startswith("https://es.wikipedia.org")]
+    if not candidatos:
+        return
+    candidatos = candidatos[:k]
+
+    def worker(hit: SearchHit) -> None:
+        html = fetch_url(hit.url, timeout=6)
+        if html:
+            texto = extract_main_text(html, max_chars=2500)
+            if len(texto) > 200:
+                hit.content = texto
+
+    with ThreadPoolExecutor(max_workers=len(candidatos)) as ex:
+        list(ex.map(worker, candidatos))
+
+
+def _formatear_para_llm(hits: list[SearchHit], query: str) -> str:
+    """Compone el contexto que se pasa al LLM. Denso, con fuentes claras."""
+    if not hits:
+        return ""
+
+    bloques: list[str] = [f"Búsqueda: {query}", ""]
+    for i, h in enumerate(hits, 1):
+        cabecera = f"[{i}] {h.title}"
+        if h.published:
+            cabecera += f"  ·  {h.published}"
+        bloques.append(cabecera)
+        bloques.append(f"    Fuente: {h.source} — {h.url}")
+        cuerpo = (h.content or h.snippet).strip()
+        if cuerpo:
+            # Sangrar el cuerpo para que se lea como cita en el prompt
+            sangrado = "\n".join("    " + linea for linea in cuerpo.splitlines())
+            bloques.append(sangrado)
+        bloques.append("")
+    return "\n".join(bloques).strip()
 
 
 def buscar_en_web(query: str, max_results: int | None = None) -> str:
-    """Devuelve resultados combinados de las fuentes, cacheados por TTL."""
+    """Devuelve un bloque de texto listo para inyectar en el prompt del LLM."""
     if not query.strip():
         return ""
     max_results = max_results or config.SEARCH_MAX_RESULTS
@@ -226,34 +387,46 @@ def buscar_en_web(query: str, max_results: int | None = None) -> str:
         log.info("Búsqueda cacheada: '%s'", query)
         return cached
 
-    resultados: dict[str, tuple[str, str]] = {}
-    with ThreadPoolExecutor(max_workers=len(_FUENTES)) as executor:
+    fuentes = dict(_FUENTES)
+    if es_pregunta_de_noticias(query):
+        fuentes["news"] = _buscar_ddgs_news
+
+    hits_por_fuente: dict[str, list[SearchHit]] = {}
+    with ThreadPoolExecutor(max_workers=len(fuentes)) as executor:
         futuros = {
             executor.submit(fn, query, max_results): nombre
-            for nombre, fn in _FUENTES.items()
+            for nombre, fn in fuentes.items()
         }
         try:
             for futuro in as_completed(futuros, timeout=config.SEARCH_TIMEOUT):
                 nombre = futuros[futuro]
                 try:
-                    resultado = futuro.result()
-                    if resultado:
-                        resultados[nombre] = resultado
-                        log.info("Fuente completada: %s", nombre)
-                except Exception as exc:
+                    resultados = futuro.result()
+                except Exception as exc:  # noqa: BLE001
                     log.warning("Fuente %s falló: %s", nombre, exc)
+                    continue
+                if resultados:
+                    hits_por_fuente[nombre] = resultados
+                    log.info("Fuente %s → %d resultados", nombre, len(resultados))
         except TimeoutError:
             log.warning("Timeout global de búsqueda; usando lo que llegó")
 
-    if not resultados:
+    # Componer lista final: noticias primero (más frescas), luego DDG, wiki, instant, finance
+    orden = ("news", "ddgs", "wiki", "instant", "finance")
+    combinados: list[SearchHit] = []
+    for clave in orden:
+        combinados.extend(hits_por_fuente.get(clave, []))
+
+    if not combinados:
         return ""
 
-    partes = []
-    for clave in _ORDEN_SALIDA:
-        if clave in resultados:
-            src, txt = resultados[clave]
-            partes.append(f"--- {src} ---\n{txt}\n")
+    # Dedupe por dominio y recorte
+    combinados = _dedupe_por_dominio(combinados, max_por_dominio=1)
+    combinados = combinados[: max(3, min(max_results, 6))]
 
-    combined = "\n".join(partes).strip()
-    _cache_put(cache_key, combined)
-    return combined
+    # Enriquecer con contenido real de páginas top
+    _enriquecer_con_contenido(combinados, k=2)
+
+    salida = _formatear_para_llm(combinados, query)
+    _cache_put(cache_key, salida)
+    return salida
