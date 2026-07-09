@@ -1,5 +1,7 @@
 Flask>=3.0,<4.0
 requests>=2.31,<3.0
 python-dotenv>=1.0,<2.0
-ddgs>=6.0,<7.0
+# ddgs (nombre nuevo). Requiere Python >=3.10.
+# Si estás en Python 3.9, cambia esta línea por: duckduckgo-search>=6.0
+ddgs>=6.0
 gunicorn>=21.2,<24.0
