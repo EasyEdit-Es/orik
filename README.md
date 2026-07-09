@@ -1,17 +1,20 @@
 # 🤖 Orik — Asistente IA Local
 
-Orik es un asistente de inteligencia artificial que corre completamente en tu máquina, sin depender de servicios externos ni suscripciones. Tus conversaciones nunca salen de tu ordenador.
+Orik es un asistente de IA que corre completamente en tu máquina, sin depender de servicios externos ni suscripciones. Tus conversaciones nunca salen de tu ordenador.
 
 ---
 
 ## ✨ Características
 
 - 🔒 **100% local** — sin APIs externas, sin suscripciones, sin coste por uso
-- 🌐 **Búsqueda web en tiempo real** — integración con DuckDuckGo y Wikipedia
+- 🌐 **Búsqueda web en tiempo real** — integración con DuckDuckGo, Wikipedia y Yahoo Finance
+- ⚡ **Respuesta en streaming** — los tokens aparecen en tiempo real, sin esperas en blanco
 - 🧠 **Dos modelos de IA** — uno rápido para búsquedas y otro más potente para conversación profunda
-- 🔄 **Detección de cambio de tema automática** para respuestas más precisas
+- 🔄 **Detección automática de cambio de tema** para respuestas más precisas
+- 💾 **Cache de búsquedas** — evita repetir las mismas consultas
 - 🎨 **Interfaz web limpia** — accesible desde cualquier navegador en tu red local
 - 🖥️ **Launcher con interfaz gráfica** — panel de control con logs, estadísticas y configuración
+- 🔐 **Autenticación opcional** — bloquea el acceso con un token Bearer si expones el servicio en tu LAN
 
 ---
 
@@ -22,9 +25,9 @@ Orik es un asistente de inteligencia artificial que corre completamente en tu m�
 | RAM | 16 GB (recomendado 32 GB) |
 | Almacenamiento | 30 GB libres |
 | Sistema operativo | Windows 10/11, macOS, Linux |
-| Python | 3.10 o superior *(solo si no usas el .exe)* |
+| Python | 3.10 o superior |
 
-> ⚠️ Sin GPU el modelo tardará más en responder. Con GPU compatible con CUDA la experiencia mejora notablemente.
+> ⚠️ Sin GPU el modelo tarda más en responder. Con GPU compatible con CUDA la experiencia mejora notablemente.
 
 ---
 
@@ -32,77 +35,81 @@ Orik es un asistente de inteligencia artificial que corre completamente en tu m�
 
 ### 1. Instala Ollama
 
-Descarga e instala Ollama desde su web oficial:
+Descarga e instala Ollama desde su web oficial: <https://ollama.com/download>
 
-👉 https://ollama.com/download
+Verifica que funciona:
 
-Una vez instalado, verifica que funciona abriendo una terminal y ejecutando:
-
-```
+```bash
 ollama --version
 ```
 
 ### 2. Descarga los modelos de IA
 
-Abre PowerShell y ejecuta estos dos comandos. El primero descarga el modelo rápido (~7 GB) y el segundo el modelo inteligente (~13 GB):
+Elige los modelos que quieres usar. Por defecto Orik espera:
 
+```bash
+ollama pull gemma3n:e2b    # rápido para clasificación y búsqueda (~2 GB)
+ollama pull gpt-oss:20b    # modelo potente para conversación sin web (~13 GB)
 ```
-ollama pull gemma4:e2b
-ollama pull gpt-oss:20b
-```
 
-> ⏳ Dependiendo de tu conexión puede tardar unos minutos.
+> Puedes cambiar los modelos en `.env` — cualquier modelo que aparezca en `ollama list` sirve.
 
-### 3. Descarga Orik
+### 3. Clona el repositorio
 
-Clona el repositorio o descarga el ZIP desde el botón verde de GitHub:
-
-```
-git clone https://github.com/tu-usuario/orik.git
+```bash
+git clone https://github.com/jrxvex/orik.git
 cd orik
 ```
 
-### 4. Inicia Orik
+### 4. Instala las dependencias
 
-**Opción A — Usar el `.exe` (recomendado, no necesita Python)**
-
-Ejecuta directamente `Orik.exe`. Se abrirá el panel de control desde el que puedes iniciar, detener y monitorizar el servidor.
-
-**Opción B — Desde Python**
-
-Instala las dependencias:
-
-```
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate    # Windows
 pip install -r requirements.txt
 ```
 
-Y luego lanza el launcher:
+### 5. Configura las variables de entorno (opcional)
 
+Copia el archivo de ejemplo y ajústalo:
+
+```bash
+cp .env.example .env
 ```
+
+Todo lo importante está documentado dentro. Si no editas nada, Orik usa valores razonables por defecto.
+
+### 6. Arranca Orik
+
+**Desarrollo:**
+
+```bash
+python app.py
+```
+
+**Con el launcher gráfico:**
+
+```bash
 python orik_launcher.py
 ```
 
-### 5. Abre Orik en el navegador
+**Producción (recomendado si lo expones a tu red):**
 
-Una vez el servidor esté en marcha (verás el indicador verde en el panel), abre tu navegador y entra en:
+```bash
+gunicorn -w 1 -k gthread --threads 4 --timeout 300 -b 0.0.0.0:5000 wsgi:application
+```
+
+### 7. Abre Orik en el navegador
 
 ```
 http://localhost:5000
 ```
 
-O desde otro dispositivo en tu red:
+O desde otro dispositivo en tu red (si arrancaste con `FLASK_HOST=0.0.0.0`):
 
 ```
 http://<tu-ip>:5000
-```
-
-Deberías ver algo así en los logs del panel:
-
-```
-✅ Ollama ya estaba en ejecución.
-🚀 Servidor corriendo - Modelo: gemma4:e2b
-⚡ Modelo rápido para keywords: gemma4:e2b
-🌐 Búsqueda web en paralelo activada
 ```
 
 ¡Listo! Ya puedes hablar con Orik.
@@ -115,59 +122,58 @@ Deberías ver algo así en los logs del panel:
 
 En la barra de escritura verás un botón con el icono 🌐.
 
-- **Activado (azul)** → Orik busca en internet antes de responder. Ideal para preguntas sobre actualidad, noticias, precios, etc.
-- **Desactivado (gris)** → Orik usa el modelo más potente (`gpt-oss:20b`) para razonar sin búsqueda. Ideal para conversaciones, análisis, redacción, código, etc.
+- **Activado (azul)** → Orik busca en internet antes de responder. Ideal para actualidad, noticias, precios, deportes.
+- **Desactivado (gris)** → Orik usa el modelo más potente (`gpt-oss:20b`) para razonar sin búsqueda. Ideal para conversaciones, análisis, redacción, código.
+
+### Nueva conversación
+
+Debajo del cuadro de texto tienes un enlace **Nueva conversación** que borra el contexto y empieza de cero. Útil cuando cambias de tema.
 
 ---
 
-## ⚙️ Configuración avanzada (opcional)
+## ⚙️ Configuración
 
-Puedes crear un archivo `.env` en la carpeta del proyecto para personalizar los modelos:
+Todas las opciones se controlan por variables de entorno (o el archivo `.env`). Ver `.env.example` para la lista completa. Las más importantes:
 
-```
-OLLAMA_MODEL=gemma4:e2b
-OLLAMA_MODEL_SMART=gpt-oss:20b
-OLLAMA_MODEL_FAST=gemma4:e2b
-FLASK_SECRET_KEY=tu_clave_secreta_aqui
-```
+| Variable | Por defecto | Descripción |
+|---|---|---|
+| `OLLAMA_HOST` | `http://localhost:11434` | Dónde escucha Ollama |
+| `OLLAMA_MODEL` | `gemma3n:e2b` | Modelo rápido (con búsqueda web) |
+| `OLLAMA_MODEL_SMART` | `gpt-oss:20b` | Modelo potente (sin búsqueda) |
+| `OLLAMA_MODEL_FAST` | `gemma3n:e2b` | Modelo para clasificación de temas |
+| `FLASK_HOST` | `127.0.0.1` | Cambia a `0.0.0.0` para exponerlo a la LAN |
+| `FLASK_PORT` | `5000` | Puerto de Flask |
+| `FLASK_DEBUG` | `false` | **Nunca lo actives en producción** |
+| `ORIK_API_TOKEN` | (vacío) | Si lo defines, el endpoint `/chat` exige `Authorization: Bearer <token>` |
+| `HISTORY_MAX_TURNS` | `30` | Turnos de historial por sesión |
+| `SEARCH_CACHE_TTL` | `600` | Segundos que se cachean los resultados de búsqueda |
 
-También puedes editar `orik_config.json` directamente o desde la pestaña **Configuración** del panel:
-
-```json
-{
-  "theme": "light",
-  "port": 5000,
-  "model": "gemma4:e2b",
-  "autoscroll": true,
-  "font_size": 9,
-  "start_minimized": false,
-  "notify_crash": true,
-  "max_log_lines": 2000
-}
-```
+También puedes editar `orik_config.json` desde la pestaña **Configuración** del launcher (afecta solo al launcher, no al servidor Flask).
 
 ---
 
 ## 🛠️ Solución de problemas
 
 **Error conectando con Ollama**
-Asegúrate de que Ollama está corriendo. Puedes iniciarlo manualmente con:
-```
+Asegúrate de que Ollama está corriendo:
+```bash
 ollama serve
 ```
 
 **La respuesta tarda mucho**
-Es normal la primera vez que se carga un modelo. Si tienes solo CPU y el modelo es grande, puede tardar varios minutos. Considera usar un modelo más ligero.
+Es normal la primera vez que se carga un modelo. Considera usar un modelo más ligero si sólo tienes CPU. Los tiempos posteriores mejoran cuando el modelo queda en caché.
 
 **ModuleNotFoundError**
-Ejecuta de nuevo `pip install -r requirements.txt` y asegúrate de estar usando Python 3.10+.
+Comprueba que el entorno virtual está activo y ejecuta de nuevo `pip install -r requirements.txt`.
+
+**El chat responde con "No tengo acceso a información en tiempo real"**
+El modelo puede estar ignorando el bloque de búsqueda. Comprueba en los logs que aparece `Contexto web N chars`. Si no, ajusta `OLLAMA_MODEL` a uno mejor (por ejemplo `llama3.1:8b`).
 
 **`pyinstaller` no se reconoce en PowerShell**
-Instálalo con:
-```
+```powershell
 python -m pip install pyinstaller
+python -m PyInstaller orik_launcher.py --onefile --noconsole
 ```
-Y usa `python -m PyInstaller` en lugar de `pyinstaller` directamente.
 
 ---
 
@@ -175,15 +181,77 @@ Y usa `python -m PyInstaller` en lugar de `pyinstaller` directamente.
 
 ```
 orik/
-├── orik_launcher.py   # Panel de control con interfaz gráfica (Tkinter)
-├── app3test.py        # Servidor principal Flask
-├── wsgi.py            # Punto de entrada para despliegue en producción
-├── orik_config.json   # Configuración del launcher
-├── memoria.json       # Memoria persistente del asistente
-├── icono.ico          # Icono de la aplicación
-├── requirements.txt   # Dependencias Python
-└── templates/
-    └── index.html     # Interfaz web
+├── app.py                  # Entrypoint de desarrollo
+├── wsgi.py                 # Entrypoint para gunicorn / uwsgi
+├── orik/
+│   ├── __init__.py
+│   ├── app.py              # Factoría Flask
+│   ├── config.py           # Config y variables de entorno
+│   ├── logging_setup.py    # Logging con formato legible
+│   ├── memoria.py          # Memoria persistente (escritura atómica)
+│   ├── nlp.py              # Extracción de keywords, clasificación
+│   ├── ollama_client.py    # Cliente HTTP + gestión del proceso Ollama
+│   ├── routes.py           # Rutas HTTP (/chat, /memoria, /healthz…)
+│   ├── search.py           # Búsqueda web en paralelo con cache TTL
+│   ├── session_store.py    # Historial de conversación en disco
+│   └── topic_detect.py     # Detección de cambio de tema con LLM
+├── templates/
+│   └── index.html          # Interfaz web
+├── tests/                  # Suite pytest
+├── orik_launcher.py        # Panel de control Tkinter
+├── orik_config.json        # Config del launcher
+├── memoria.json            # Memoria persistente del asistente
+├── requirements.txt        # Dependencias runtime
+├── requirements-dev.txt    # Dependencias desarrollo (tests, lint)
+├── pyproject.toml          # Config de pytest / ruff / coverage
+├── .env.example            # Plantilla de variables de entorno
+└── .github/workflows/ci.yml
+```
+
+---
+
+## 🧪 Desarrollo
+
+Instala las dependencias de desarrollo:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Ejecuta los tests:
+
+```bash
+pytest
+```
+
+Comprueba el estilo:
+
+```bash
+ruff check .
+```
+
+Todo se ejecuta también en GitHub Actions en cada push.
+
+---
+
+## 🌐 Endpoints HTTP
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/` | Interfaz web del chat |
+| `GET` | `/healthz` | Ping; devuelve estado de Ollama |
+| `POST` | `/chat` | Enviar mensaje. Body: `{"mensaje": str, "busqueda_web": bool, "stream": bool}` |
+| `GET` | `/memoria` | Ver memoria persistente |
+| `POST` | `/memoria/borrar` | Limpiar la memoria |
+| `POST` | `/historial/borrar` | Empezar una conversación nueva |
+
+Cuando `stream: true` (por defecto) `/chat` devuelve `text/event-stream` con eventos JSON:
+
+```
+data: {"meta": {"backend": "…", "busqueda_web": true, "model": "gemma3n:e2b"}}
+data: {"token": "Hola"}
+data: {"token": ", ¿en qué puedo ayudarte?"}
+data: {"done": true}
 ```
 
 ---

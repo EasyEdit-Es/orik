@@ -1,4 +1,5 @@
-Flask
-requests
-python-dotenv
-duckduckgo-search
+Flask>=3.0,<4.0
+requests>=2.31,<3.0
+python-dotenv>=1.0,<2.0
+ddgs>=6.0,<7.0
+gunicorn>=21.2,<24.0

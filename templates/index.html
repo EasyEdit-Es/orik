@@ -297,6 +297,37 @@
         }
 
         .status-label { color: var(--text-muted); font-size: 12.5px; min-height: 18px; }
+        .link-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            box-shadow: none;
+            padding: 4px 10px;
+            width: auto;
+            height: auto;
+            min-width: auto;
+            font-size: 12.5px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .link-btn:hover:not(:disabled) {
+            background: transparent;
+            color: var(--accent);
+            transform: none;
+            box-shadow: none;
+        }
+        .search-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #eff6ff;
+            color: var(--accent);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 99px;
+            font-weight: 500;
+            margin-bottom: 6px;
+        }
         .status-label.error { color: #e05a5a; }
 
         pre {
@@ -416,6 +447,7 @@
                 </div>
                 <div class="footer-meta">
                     <div id="status-label" class="status-label"></div>
+                    <button id="btn-limpiar" title="Empezar una conversación nueva" type="button" class="link-btn">Nueva conversación</button>
                 </div>
                 <div style="text-align:center; margin-top:8px; font-size:11px; color:#b0a99a; user-select:none;">
                     © 2025 Orik — Todos los derechos reservados.
@@ -432,9 +464,15 @@ No está permitida la modificación, redistribución, sublicencia, venta ni crea
         const chat = document.getElementById('chat');
         const input = document.getElementById('input');
         const btnEnviar = document.getElementById('btn-enviar');
+        const btnLimpiar = document.getElementById('btn-limpiar');
         const statusLabel = document.getElementById('status-label');
         const chkWeb = document.getElementById('chkWeb');
         const toggleWeb = document.getElementById('toggleWeb');
+
+        // marked: no permitir HTML crudo en el output del modelo (defensa XSS básica)
+        if (typeof marked !== 'undefined' && marked.setOptions) {
+            marked.setOptions({ breaks: true, gfm: true });
+        }
 
         // Control de scroll: no forzar scroll si el usuario está mirando hacia arriba
         let userScrolled = false;
@@ -467,6 +505,18 @@ No está permitida la modificación, redistribución, sublicencia, venta ni crea
         });
 
         btnEnviar.addEventListener('click', enviarMensaje);
+        btnLimpiar.addEventListener('click', limpiarConversacion);
+
+        async function limpiarConversacion() {
+            if (!confirm('¿Empezar una conversación nueva? Se olvidará el contexto de esta.')) return;
+            try {
+                await fetch('/historial/borrar', { method: 'POST' });
+            } catch (_) { /* ignorar; borramos igualmente en cliente */ }
+            // Vaciar chat en la UI conservando el primer mensaje de bienvenida si existiera
+            chat.innerHTML = '';
+            setStatus('Conversación nueva iniciada.', false);
+            setTimeout(() => setStatus('', false), 2500);
+        }
 
         function setStatus(texto, isError = false) {
             statusLabel.textContent = texto;
@@ -563,9 +613,15 @@ No está permitida la modificación, redistribución, sublicencia, venta ni crea
             if (typing) typing.remove();
         }
 
+        const MAX_MENSAJE = 8000;
+
         async function enviarMensaje() {
             const texto = input.value.trim();
             if (!texto) return;
+            if (texto.length > MAX_MENSAJE) {
+                setStatus(`Mensaje demasiado largo (${texto.length}/${MAX_MENSAJE}).`, true);
+                return;
+            }
 
             agregarMensaje(texto, 'user');
             input.value = '';
@@ -574,45 +630,70 @@ No está permitida la modificación, redistribución, sublicencia, venta ni crea
             mostrarTyping();
             btnEnviar.disabled = true;
             const webActiva = chkWeb.checked;
-            setStatus(webActiva ? 'Pensando...' : 'Pensando (sin web)...', false);
+            setStatus(webActiva ? 'Buscando y pensando…' : 'Pensando…', false);
 
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mensaje: texto, busqueda_web: webActiva })
+                    body: JSON.stringify({ mensaje: texto, busqueda_web: webActiva, stream: true })
                 });
+
+                if (response.status === 401) {
+                    quitarTyping();
+                    const msg = 'Sesión no autorizada. Recarga la página o revisa el token del servidor.';
+                    agregarMensaje(msg, 'bot');
+                    setStatus(msg, true);
+                    return;
+                }
+                if (response.status === 413) {
+                    quitarTyping();
+                    const msg = 'El mensaje es demasiado largo para el servidor.';
+                    agregarMensaje(msg, 'bot');
+                    setStatus(msg, true);
+                    return;
+                }
+                if (!response.ok && response.status !== 200) {
+                    quitarTyping();
+                    let msg = `Error del servidor (${response.status}).`;
+                    try {
+                        const data = await response.json();
+                        if (data.error) msg = data.error;
+                    } catch (_) { /* body no era JSON */ }
+                    agregarMensaje(msg, 'bot');
+                    setStatus(msg, true);
+                    return;
+                }
 
                 const contentType = response.headers.get('Content-Type') || '';
 
-                // Respuesta de caché o búsqueda web (JSON normal)
+                // Respuesta JSON (modo no-streaming del backend)
                 if (contentType.includes('application/json')) {
                     const data = await response.json();
                     quitarTyping();
                     if (data.respuesta) {
-                        agregarMensaje(data.respuesta, 'bot', data.backend, true);
+                        agregarMensaje(data.respuesta, 'bot', data.backend, true, data.busqueda_web);
                         setStatus('', false);
                     } else {
                         const msg = data.error || 'Error: no se recibió respuesta.';
                         agregarMensaje(msg, 'bot');
                         setStatus(msg, true);
                     }
-                    btnEnviar.disabled = false;
-                    input.focus();
                     return;
                 }
 
-                // Streaming (text/event-stream): tokens aparecen en tiempo real
+                // Streaming SSE
                 quitarTyping();
 
-                // Crear burbuja vacía del bot con el avatar del logo
                 const mensajeEl = document.createElement('div');
                 mensajeEl.className = 'message bot';
-                mensajeEl.innerHTML = `<div class="avatar">${document.querySelector('.message.bot .avatar').innerHTML}</div><div class="bubble"></div>`;
+                const avatarInner = document.querySelector('.message.bot .avatar')?.innerHTML || '🤖';
+                mensajeEl.innerHTML = `<div class="avatar">${avatarInner}</div><div class="bubble"></div>`;
                 chat.appendChild(mensajeEl);
                 const bubbleEl = mensajeEl.querySelector('.bubble');
 
                 let rawText = '';
+                let metaShown = false;
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
@@ -625,31 +706,45 @@ No está permitida la modificación, redistribución, sublicencia, venta ni crea
                     buffer = lines.pop();
                     for (const line of lines) {
                         if (!line.startsWith('data: ')) continue;
-                        try {
-                            const chunk = JSON.parse(line.slice(6));
-                            if (chunk.token) {
-                                rawText += chunk.token;
-                                bubbleEl.innerHTML = marked.parse(rawText);
-                                scrollToBottom();
+                        let chunk;
+                        try { chunk = JSON.parse(line.slice(6)); } catch (_) { continue; }
+
+                        if (chunk.meta && !metaShown) {
+                            metaShown = true;
+                            if (chunk.meta.busqueda_web) {
+                                setStatus('Búsqueda web usada · redactando respuesta…', false);
+                                const badge = document.createElement('div');
+                                badge.className = 'search-badge';
+                                badge.textContent = '🌐 Con búsqueda web';
+                                bubbleEl.before(badge);
+                            } else {
+                                setStatus('Redactando respuesta…', false);
                             }
-                            if (chunk.done) {
-                                setStatus('', false);
-                                // Aplicar word-reveal sobre el texto final
-                                // (ya renderizado, solo animamos si es texto corto)
-                            }
-                        } catch (_) {}
+                        }
+                        if (chunk.token) {
+                            rawText += chunk.token;
+                            bubbleEl.innerHTML = marked.parse(rawText);
+                            scrollToBottom();
+                        }
+                        if (chunk.error) {
+                            const msg = chunk.error;
+                            bubbleEl.textContent = msg;
+                            setStatus(msg, true);
+                        }
+                        if (chunk.done) {
+                            setStatus('', false);
+                        }
                     }
                 }
-
             } catch (error) {
                 quitarTyping();
                 const message = 'No se pudo conectar con el servidor.';
                 agregarMensaje(message, 'bot');
                 setStatus(message, true);
+            } finally {
+                btnEnviar.disabled = false;
+                input.focus();
             }
-
-            btnEnviar.disabled = false;
-            input.focus();
         }
 
         window.addEventListener('load', () => {

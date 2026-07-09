@@ -1,18 +1,18 @@
 """
 Orik Launcher — Interfaz gráfica de control.
-Coloca este archivo en la misma carpeta que app3test.py y ejecuta:
+Coloca este archivo en la carpeta raíz del proyecto y ejecuta:
     python orik_launcher.py
 Requiere: pip install psutil pillow
 """
 
 import json
 import os
-import re
-import sys
 import queue
+import re
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import tkinter.filedialog as fd
@@ -34,8 +34,8 @@ ICO_PATH    = os.path.join(SCRIPT_DIR, "icono.ico")
 DEFAULT_CFG = {
     "theme":           "light",
     "port":            5000,
-    "app_file":        "app3test.py",
-    "model":           "gemma4:e2b",
+    "app_file":        "app.py",
+    "model":           "gemma3n:e2b",
     "autoscroll":      True,
     "font_size":       9,
     "start_minimized": False,
@@ -157,7 +157,7 @@ class OrikLauncher(tk.Tk):
         cfg = dict(DEFAULT_CFG)
         if os.path.exists(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                with open(CONFIG_FILE, encoding="utf-8") as f:
                     cfg.update(json.load(f))
             except Exception:
                 pass
@@ -724,10 +724,10 @@ class OrikLauncher(tk.Tk):
         if self._running:
             return
         port = self._cfg["port"]
-        if self._port_in_use(port):
-            if not mb.askyesno("Puerto ocupado",
-                               f"El puerto {port} ya esta en uso.\nIntentar arrancar igualmente?"):
-                return
+        if self._port_in_use(port) and not mb.askyesno(
+            "Puerto ocupado",
+            f"El puerto {port} ya esta en uso.\nIntentar arrancar igualmente?"):
+            return
         app_file = os.path.join(SCRIPT_DIR, self._cfg["app_file"])
         if not os.path.exists(app_file):
             self._append_log(f"No se encuentra {self._cfg['app_file']} en: {SCRIPT_DIR}", "#f87171")
